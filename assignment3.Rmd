@@ -1,7 +1,7 @@
 ---
 title: "Statistical assignment 3"
-author: "[add your name here] [add your candidate number here - mandatory]"
-date: "[add date here]"
+author: "James Hughes 660025969"
+date: "12/02/2020"
 output: github_document
 ---
 
@@ -26,6 +26,7 @@ The only thing you need to do for this code to work on your computer is to provi
 ```{r}
 library(tidyverse)
 library(data.table)
+library(readr)
 
 # data.table is faster compared to readr so we'll use it in this case (the function fread()). You need to install this package first to be able to run this code.
 
@@ -33,7 +34,7 @@ library(data.table)
 
 files <- dir(
              # Select the folder where the files are stored.
-             "[add your path here]",
+             "C:/Users/James/Documents/Data III/UKDA-6614-tab/tab",
              # Tell R which pattern you want present in the files it will display.
              pattern = "indresp",
              # We want this process to repeat through the entire folder.
@@ -65,7 +66,6 @@ for (i in 1:7) {
         # Now we can remove data to free up the memory.
         rm(data)
 } 
-
 ```
 
 ## Reshape data (20 points)
@@ -73,9 +73,14 @@ for (i in 1:7) {
 Now we have got the data from all 7 waves in the same data frame **all7** in the wide format. Note that the panel is unbalanced, i.e. we included all people who participated in at least one wave of the survey. Reshape the data to the long format. The resulting data frame should have six columns for six variables.
 
 ```{r}
+
 Long <- all7 %>%
-  ...
-Long
+  pivot_longer(a_memorig:g_vote6, names_to = "variable", values_to = "value") %>% 
+  ## Separating the 'variable' column into 'wave' and 'variable'
+  separate(variable, into = c("wave", "variable"), sep = "_", extra = "merge") %>%
+## Making it wider, putting all the variables back in
+  pivot_wider(names_from = variable, values_from = value)
+
 ```
 
 ## Filter and recode (20 points)
@@ -83,15 +88,21 @@ Long
 Now we want to filter the data keeping only respondents from the original UKHLS sample for Great Britain (memorig == 1). We also want to clean the variables for sex (recoding it to "male" or "female") and political interest (keeping the values from 1 to 4 and coding all negative values as missing). Tabulate *sex* and *vote6* to make sure your recodings were correct. 
 
 ```{r}
-Long <- Long %>%
-        filter(...) %>%
-        mutate(sex_dv = ...) %>%
-        mutate(vote6 = ...)
+table(Long$vote6)
 
-Long %>%
-        ...
-Long %>%
-        ...
+Long <- Long %>%
+        filter(memorig == 1) %>%
+        mutate(sex_dv = ifelse(sex_dv == 2, "female",
+                           ifelse(sex_dv == 1, "male", NA))) %>%
+        mutate(vote6 = case_when(
+          vote6 %in% 1:4 ~ vote6,
+          vote6 < 1 ~ NA_integer_
+          
+        ))
+
+table(Long$sex_dv)
+
+table(Long$vote6)
 
 ```
 
@@ -101,7 +112,9 @@ Political interest is an ordinal variable, but we will treat it as interval and 
 
 ```{r}
 meanVote6 <- Long %>%
-        ...
+  group_by(wave, sex_dv) %>% 
+  filter(!is.na(sex_dv)) %>% 
+  summarise(mean(vote6, na.rm = TRUE))
         
 meanVote6
 ```
@@ -120,9 +133,17 @@ In the cells of this table you should have mean political interest by sex and wa
 Write a short interpretation of your findings.
 
 ```{r}
-meanVote6 %>%
-        ...
+
+names(meanVote6) <- c("Wave", "Sex", "Mean_Pol")
+
+meanVote6Wide <- meanVote6 %>%
+  dcast(Sex ~ Wave)
+
+meanVote6Wide
+
 ```
+
+These findings suggest that males show consistently higher levels of political interest than females in Waves 1-7, as they have a lower mean value of hvote 6 in every wave. Both males and females show small fluctuations in mean political interest throughout the waves. Both groups show an overall increase in political interest between waves 1 and 7, with females going from 2.84 to 2.73, and males going from 2.52 to 2.41 in Wave 1 to Wave 7 respectively.  
 
 ## Estimate stability of political interest (30 points)
 
@@ -147,6 +168,61 @@ Write the R code that does the following.
 5. Write a short interpretation of your findings.
 
 ```{r}
-...
+
+## 1. To simplify interpretation, keep only the respondents with non-missing values for political interest in all seven waves.
+## 2. Calculate mean delta for each person in the data set
+
+DeltaSet <- Long %>% 
+  group_by(pidp) %>%
+  filter(!is.na(vote6)) %>% 
+  filter(n()>= 7)
+
+DeltaSet <- DeltaSet %>%
+  group_by(pidp) %>% 
+  mutate(deltarow = order_by(wave, vote6 - lag(vote6))) %>% 
+  mutate(deltarow = ifelse(is.na(deltarow), 0, deltarow))
+
+DeltaSet$deltarow = abs(DeltaSet$deltarow)
+
+DeltaSet <- DeltaSet %>%
+  group_by(pidp) %>% 
+  mutate(
+    sum.delta = sum(deltarow, na.rm = TRUE)
+    )
+
+## 3. Calculate mean delta for men and women 
+
+sexdelta <- as.table(tapply(DeltaSet$sum.delta, DeltaSet$sex_dv, mean, na.rm = TRUE))
+
+sexdelta
+
+## 4. Calculate mean Delta by age (at wave 1) and plot the local polynomial curve showing the association between age at wave 1 and mean Delta. You can use either **ggplot2** or the *scatter.smooth()* function from base R.
+
+agedelta <- DeltaSet %>%
+  mutate(case_when(
+    age_dv[wave == "a"] == '-9' ~ NA
+  )) %>% 
+  filter(!is.na(age_dv))
+
+agedelta <- subset(agedelta, subset = agedelta$wave == "a")
+
+agemeantable <- data.frame(tapply(agedelta$sum.delta, agedelta$age_dv, mean))
+
+agemeantable$Age <- c(15:90, 91, 95)
+
+names(agemeantable) <- c("Mean_Delta", "Age")
+
+ggplot(agemeantable, aes(x = Age, y = Mean_Delta)) + geom_point() + geom_smooth()
+
+## 5. Write a short interpretation of your findings.
 
 ```
+
+The graph suggests that between the ages of 15 and 50, political interest (mean delta) remains relatively constant, perhaps decreasing slightly but remaining at an average of about 2. However, as age increases past 55, mean delta also increases. This suggests that older voters are more likely to change their level of political interest year-on-year than younger voters. As age increases past around 75, the points vary from the mean greatly. This is largely due to the lack of voters who are above the age of 75 in Wave A. 
+
+
+
+
+
+
+
